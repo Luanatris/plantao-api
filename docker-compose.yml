@@ -1,0 +1,64 @@
+version: '3.9'
+
+services:
+
+  # ── Banco de Dados PostgreSQL ─────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: plantao_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${DB_NAME:-plantao_db}
+      POSTGRES_USER:     ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # dados persistem entre reinicializações
+    ports:
+      - "5432:5432"                               # expõe para conectar com pgAdmin
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-plantao_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── API Node.js ───────────────────────────────────────────────────────────
+  api:
+    build: .
+    container_name: plantao_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy     # só sobe após o banco estar pronto
+    environment:
+      PORT:          3000
+      NODE_ENV:      production
+      DB_HOST:       db                # nome do serviço Docker (não localhost!)
+      DB_PORT:       5432
+      DB_NAME:       ${DB_NAME:-plantao_db}
+      DB_USER:       ${DB_USER:-postgres}
+      DB_PASSWORD:   ${DB_PASSWORD:-postgres}
+      JWT_SECRET:    ${JWT_SECRET:-plantao_jwt_secret_mude_em_producao}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./public:/app/public           # monta a pasta do frontend
+
+  # ── Migration + Seed (roda uma vez e sai) ─────────────────────────────────
+  migrate:
+    build: .
+    container_name: plantao_migrate
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST:     db
+      DB_PORT:     5432
+      DB_NAME:     ${DB_NAME:-plantao_db}
+      DB_USER:     ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+    command: sh -c "node src/db/migrate.js && node src/db/seed.js"
+    restart: "no"                      # não reinicia após concluir
+
+volumes:
+  postgres_data:                       # volume nomeado para persistência
